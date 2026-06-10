@@ -1,0 +1,71 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:       # allow manual trigger from the Actions tab
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── 2. Python setup ──────────────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 3. Install Python deps + PyInstaller ─────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pypdf pdf2image Pillow pyinstaller
+
+      # ── 4. Download Poppler for Windows (required by pdf2image) ───────────────
+      - name: Download & extract Poppler
+        shell: pwsh
+        run: |
+          $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip"
+          Invoke-WebRequest -Uri $url -OutFile poppler.zip
+          Expand-Archive -Path poppler.zip -DestinationPath poppler_bin
+          # Locate the bin folder (it may be one level deep)
+          $binDir = Get-ChildItem -Path poppler_bin -Recurse -Directory -Filter "bin" | Select-Object -First 1
+          echo "POPPLER_BIN=$($binDir.FullName)" >> $env:GITHUB_ENV
+
+      # ── 5. Build the exe ─────────────────────────────────────────────────────
+      - name: Build with PyInstaller
+        shell: pwsh
+        run: |
+          $popplerBin = $env:POPPLER_BIN
+          pyinstaller `
+            --onefile `
+            --windowed `
+            --name "PDFSplitter" `
+            --hidden-import pypdf `
+            --hidden-import pdf2image `
+            --hidden-import PIL `
+            --hidden-import PIL.Image `
+            --hidden-import PIL.JpegImagePlugin `
+            --add-binary "$popplerBin\pdftoppm.exe;." `
+            --add-binary "$popplerBin\pdfinfo.exe;." `
+            --add-binary "$popplerBin\libpoppler-*.dll;." `
+            --add-binary "$popplerBin\freetype*.dll;." `
+            --add-binary "$popplerBin\libjpeg*.dll;." `
+            --add-binary "$popplerBin\libpng*.dll;." `
+            --add-binary "$popplerBin\zlib*.dll;." `
+            pdf_splitter_gui.py
+
+      # ── 6. Upload exe as artifact ─────────────────────────────────────────────
+      - name: Upload EXE artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PDFSplitter-Windows
+          path: dist\PDFSplitter.exe
+          retention-days: 30
