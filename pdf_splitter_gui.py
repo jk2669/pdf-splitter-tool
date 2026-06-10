@@ -3,6 +3,7 @@ PDF Document Splitter — GUI Application
 Splits every PDF in a folder into: Photo (JPG), Aadhaar, 10th, 12th files.
 """
 
+import os
 import queue
 import re
 import sys
@@ -13,6 +14,12 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 
 # ── Core splitting logic ───────────────────────────────────────────────────────
+
+def _get_poppler_path() -> str | None:
+    """Return bundled Poppler bin path when running as a PyInstaller exe."""
+    if getattr(sys, "frozen", False):
+        return os.path.join(sys._MEIPASS, "poppler")  # type: ignore[attr-defined]
+    return None
 
 def _extract_number(filename: str) -> str:
     name = Path(filename).stem
@@ -66,8 +73,10 @@ def split_pdf(input_path: str, output_folder: str, log_fn=print) -> int:
 
         dest = out_dir / fname
         if fmt == "jpg":
-            imgs = convert_from_path(str(src), first_page=idx + 1,
-                                     last_page=idx + 1, dpi=200)
+            imgs = convert_from_path(
+                str(src), first_page=idx + 1, last_page=idx + 1,
+                dpi=200, poppler_path=_get_poppler_path(),
+            )
             imgs[0].save(str(dest), "JPEG")
         else:
             writer = PdfWriter()

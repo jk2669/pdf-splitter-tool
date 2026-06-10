@@ -34,16 +34,17 @@ jobs:
         run: |
           $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip"
           Invoke-WebRequest -Uri $url -OutFile poppler.zip
-          Expand-Archive -Path poppler.zip -DestinationPath poppler_bin
-          # Locate the bin folder (it may be one level deep)
-          $binDir = Get-ChildItem -Path poppler_bin -Recurse -Directory -Filter "bin" | Select-Object -First 1
-          echo "POPPLER_BIN=$($binDir.FullName)" >> $env:GITHUB_ENV
+          Expand-Archive -Path poppler.zip -DestinationPath poppler_extracted
+          # Find the bin folder and copy its contents into ./poppler/
+          $binDir = Get-ChildItem -Path poppler_extracted -Recurse -Directory -Filter "bin" | Select-Object -First 1
+          New-Item -ItemType Directory -Force -Path poppler | Out-Null
+          Copy-Item -Path "$($binDir.FullName)\*" -Destination poppler -Recurse
+          Write-Host "Poppler files copied: $((Get-ChildItem poppler).Count)"
 
       # ── 5. Build the exe ─────────────────────────────────────────────────────
       - name: Build with PyInstaller
         shell: pwsh
         run: |
-          $popplerBin = $env:POPPLER_BIN
           pyinstaller `
             --onefile `
             --windowed `
@@ -53,13 +54,7 @@ jobs:
             --hidden-import PIL `
             --hidden-import PIL.Image `
             --hidden-import PIL.JpegImagePlugin `
-            --add-binary "$popplerBin\pdftoppm.exe;." `
-            --add-binary "$popplerBin\pdfinfo.exe;." `
-            --add-binary "$popplerBin\libpoppler-*.dll;." `
-            --add-binary "$popplerBin\freetype*.dll;." `
-            --add-binary "$popplerBin\libjpeg*.dll;." `
-            --add-binary "$popplerBin\libpng*.dll;." `
-            --add-binary "$popplerBin\zlib*.dll;." `
+            --add-data "poppler;poppler" `
             pdf_splitter_gui.py
 
       # ── 6. Upload exe as artifact ─────────────────────────────────────────────
