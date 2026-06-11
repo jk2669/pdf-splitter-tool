@@ -12,6 +12,8 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
+import license_manager
+
 
 # ── Core splitting logic ───────────────────────────────────────────────────────
 
@@ -330,5 +332,16 @@ class App(tk.Tk):
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # License check — must pass before the window opens
+    _ok, _msg = license_manager.verify()
+    if not _ok:
+        _root = tk.Tk()
+        _root.withdraw()
+        messagebox.showerror("License Error", _msg)
+        _root.destroy()
+        sys.exit(1)
+
     app = App()
+    # Show license status in the title bar
+    app.title(f"PDF Document Splitter  ·  {_msg}")
     app.mainloop()

@@ -54,13 +54,24 @@ jobs:
             --hidden-import PIL `
             --hidden-import PIL.Image `
             --hidden-import PIL.JpegImagePlugin `
+            --hidden-import license_manager `
             --add-data "poppler;poppler" `
             pdf_splitter_gui.py
 
-      # ── 6. Upload exe as artifact ─────────────────────────────────────────────
-      - name: Upload EXE artifact
+      # ── 6. Stage distribution folder (exe + license side-by-side) ────────────
+      - name: Stage distribution package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item dist\PDFSplitter.exe release\
+          Copy-Item license.lic           release\
+          Write-Host "Release contents:"
+          Get-ChildItem release
+
+      # ── 7. Upload artifact zip ────────────────────────────────────────────────
+      - name: Upload distribution artifact
         uses: actions/upload-artifact@v4
         with:
           name: PDFSplitter-Windows
-          path: dist\PDFSplitter.exe
+          path: release\
           retention-days: 30

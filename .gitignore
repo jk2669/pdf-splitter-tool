@@ -27,6 +27,6 @@ Thumbs.db
 .vscode/
 .idea/
 
-# PDF test files
+# PDF test files (keep license.lic tracked)
 *.pdf
 output/
