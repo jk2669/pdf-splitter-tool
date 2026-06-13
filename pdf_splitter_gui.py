@@ -29,50 +29,70 @@ def _extract_number(filename: str) -> str:
     return match.group() if match else name
 
 
-def split_pdf(input_path: str, output_folder: str, log_fn=print) -> int:
+REQUIRED_PAGES = 4
+_PAGE_LABELS   = {0: "Photo", 1: "Aadhaar", 2: "10th", 3: "12th"}
+
+
+def split_pdf(input_path: str, output_folder: str, log_fn=print) -> tuple[int, str]:
     """
     Split one PDF into photo + aadhaar + 10th + 12th outputs.
-    Returns the number of files written.
+
+    Returns (files_written, status) where status is:
+      "ok"     — all 4 pages found and split
+      "failed" — fewer than 4 pages; original copied to output_folder/failed/
+      "error"  — unreadable or not a PDF
     """
+    import shutil
+
     try:
         from pypdf import PdfReader, PdfWriter
     except ImportError:
         log_fn("[ERROR] pypdf not installed — run: pip install pypdf")
-        return 0
+        return 0, "error"
 
     try:
         from pdf2image import convert_from_path
     except ImportError:
         log_fn("[ERROR] pdf2image not installed — run: pip install pdf2image")
-        return 0
+        return 0, "error"
 
     src = Path(input_path).resolve()
     if not src.exists() or src.suffix.lower() != ".pdf":
-        log_fn(f"[SKIP]  Not a valid PDF: {src.name}")
-        return 0
+        log_fn(f"[SKIP]   Not a valid PDF: {src.name}")
+        return 0, "error"
 
     out_dir = Path(output_folder).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    number = _extract_number(src.name)
-    reader = PdfReader(str(src))
-    total = len(reader.pages)
+    try:
+        reader = PdfReader(str(src))
+        total  = len(reader.pages)
+    except Exception as exc:
+        log_fn(f"[ERROR]  Cannot read {src.name}: {exc}")
+        return 0, "error"
 
     log_fn(f"\n► {src.name}  ({total} page{'s' if total != 1 else ''})")
 
+    # ── Incomplete PDF → failed folder ────────────────────────────────────────
+    if total < REQUIRED_PAGES:
+        missing = [_PAGE_LABELS[i] for i in range(REQUIRED_PAGES) if i >= total]
+        log_fn(f"  [FAILED] Missing page(s): {', '.join(missing)} — copying to failed/")
+        failed_dir = out_dir / "failed"
+        failed_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(failed_dir / src.name))
+        return 0, "failed"
+
+    # ── Full PDF → split ──────────────────────────────────────────────────────
+    number   = _extract_number(src.name)
     page_map = {
-        0: ("Photo",   f"{number}.jpg",          "jpg"),
-        1: ("Aadhaar", f"{number}_aadhaar.pdf",  "pdf"),
-        2: ("10th",    f"{number}_10th.pdf",     "pdf"),
-        3: ("12th",    f"{number}_12th.pdf",     "pdf"),
+        0: ("Photo",   f"{number}.jpg",         "jpg"),
+        1: ("Aadhaar", f"{number}_aadhaar.pdf", "pdf"),
+        2: ("10th",    f"{number}_10th.pdf",    "pdf"),
+        3: ("12th",    f"{number}_12th.pdf",    "pdf"),
     }
 
     count = 0
     for idx, (label, fname, fmt) in page_map.items():
-        if idx >= total:
-            log_fn(f"  [SKIP]  Page {idx + 1} missing → {label}")
-            continue
-
         dest = out_dir / fname
         if fmt == "jpg":
             imgs = convert_from_path(
@@ -87,10 +107,10 @@ def split_pdf(input_path: str, output_folder: str, log_fn=print) -> int:
                 writer.write(fh)
 
         kb = dest.stat().st_size // 1024
-        log_fn(f"  [OK]    {label:<8} →  {fname}  ({kb} KB)")
+        log_fn(f"  [OK]     {label:<8} →  {fname}  ({kb} KB)")
         count += 1
 
-    return count
+    return count, "ok"
 
 
 # ── GUI ────────────────────────────────────────────────────────────────────────
@@ -265,26 +285,29 @@ class App(tk.Tk):
         pdfs = sorted(Path(in_dir).glob("*.pdf"))
         if not pdfs:
             self._emit("[WARN]  No PDF files found in the selected folder.", "warn")
-            self._finish(0, 0)
+            self._finish(0, 0, 0)
             return
 
         self._emit(f"Found {len(pdfs)} PDF file(s) — starting…\n", "hdr")
 
-        total_pdfs = 0
-        total_files = 0
+        n_ok = n_failed = n_files = 0
         for pdf in pdfs:
-            files = split_pdf(str(pdf), out_dir, log_fn=self._emit)
-            if files > 0:
-                total_pdfs += 1
-                total_files += files
+            files, status = split_pdf(str(pdf), out_dir, log_fn=self._emit)
+            if status == "ok":
+                n_ok    += 1
+                n_files += files
+            elif status == "failed":
+                n_failed += 1
 
-        self._finish(total_pdfs, total_files)
+        self._finish(n_ok, n_files, n_failed)
 
-    def _finish(self, pdfs: int, files: int):
-        self._emit(
-            f"\n{'─' * 55}\nCompleted: {pdfs} PDF(s) processed, {files} output file(s) saved.",
-            "hdr",
-        )
+    def _finish(self, n_ok: int, n_files: int, n_failed: int):
+        lines = [f"\n{'─' * 55}"]
+        lines.append(f"Split OK : {n_ok} PDF(s) → {n_files} output file(s)")
+        if n_failed:
+            lines.append(f"Failed   : {n_failed} PDF(s) copied to  output/failed/")
+        lines.append(f"Total    : {n_ok + n_failed} PDF(s) processed")
+        self._emit("\n".join(lines), "hdr")
         self._q.put(("__done__", None))
 
     # ── Log helpers ───────────────────────────────────────────────────────────
