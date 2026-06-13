@@ -6,6 +6,7 @@ Splits every PDF in a folder into: Photo (JPG), Aadhaar, 10th, 12th files.
 import os
 import queue
 import re
+import shutil
 import sys
 import threading
 import tkinter as tk
@@ -31,6 +32,23 @@ def _extract_number(filename: str) -> str:
 
 REQUIRED_PAGES = 4
 _PAGE_LABELS   = {0: "Photo", 1: "Aadhaar", 2: "10th", 3: "12th"}
+_RESULT_PAGES  = (2, 3)   # 10th and 12th marksheet pages
+
+
+def _failed_result_page(reader) -> str:
+    """Scan 10th/12th pages for the word FAILED. Returns page label or ''."""
+    for idx in _RESULT_PAGES:
+        if idx < len(reader.pages):
+            text = reader.pages[idx].extract_text() or ""
+            if "FAILED" in text.upper():
+                return _PAGE_LABELS[idx]
+    return ""
+
+
+def _copy_to_failed(src: Path, out_dir: Path) -> None:
+    failed_dir = out_dir / "failed"
+    failed_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src), str(failed_dir / src.name))
 
 
 def split_pdf(input_path: str, output_folder: str, log_fn=print) -> tuple[int, str]:
@@ -38,12 +56,10 @@ def split_pdf(input_path: str, output_folder: str, log_fn=print) -> tuple[int, s
     Split one PDF into photo + aadhaar + 10th + 12th outputs.
 
     Returns (files_written, status) where status is:
-      "ok"     — all 4 pages found and split
-      "failed" — fewer than 4 pages; original copied to output_folder/failed/
+      "ok"     — all 4 pages found and result is PASS
+      "failed" — incomplete or FAILED result; original copied to output_folder/failed/
       "error"  — unreadable or not a PDF
     """
-    import shutil
-
     try:
         from pypdf import PdfReader, PdfWriter
     except ImportError:
@@ -77,9 +93,14 @@ def split_pdf(input_path: str, output_folder: str, log_fn=print) -> tuple[int, s
     if total < REQUIRED_PAGES:
         missing = [_PAGE_LABELS[i] for i in range(REQUIRED_PAGES) if i >= total]
         log_fn(f"  [FAILED] Missing page(s): {', '.join(missing)} — copying to failed/")
-        failed_dir = out_dir / "failed"
-        failed_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(failed_dir / src.name))
+        _copy_to_failed(src, out_dir)
+        return 0, "failed"
+
+    # ── FAILED result on marksheet → failed folder ────────────────────────────
+    failed_page = _failed_result_page(reader)
+    if failed_page:
+        log_fn(f"  [FAILED] Result is FAILED on {failed_page} marksheet — copying to failed/")
+        _copy_to_failed(src, out_dir)
         return 0, "failed"
 
     # ── Full PDF → split ──────────────────────────────────────────────────────

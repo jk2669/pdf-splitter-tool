@@ -31,12 +31,32 @@ from pathlib import Path
 
 REQUIRED_PAGES = 4
 _PAGE_LABELS   = {0: "Photo", 1: "Aadhaar", 2: "10th", 3: "12th"}
+_RESULT_PAGES  = (2, 3)   # 10th and 12th marksheet pages
 
 
 def _extract_number(filename: str) -> str:
     name  = Path(filename).stem
     match = re.search(r"\d+", name)
     return match.group() if match else name
+
+
+def _failed_result_page(reader) -> str:
+    """
+    Scan the 10th and 12th pages for the word FAILED in the result column.
+    Returns the page label (e.g. "10th") if found, empty string otherwise.
+    """
+    for idx in _RESULT_PAGES:
+        if idx < len(reader.pages):
+            text = reader.pages[idx].extract_text() or ""
+            if "FAILED" in text.upper():
+                return _PAGE_LABELS[idx]
+    return ""
+
+
+def _copy_to_failed(src: Path, out_dir: Path) -> None:
+    failed_dir = out_dir / "failed"
+    failed_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(src), str(failed_dir / src.name))
 
 
 def split_one(input_path: str, output_folder: str) -> tuple[int, str]:
@@ -76,10 +96,15 @@ def split_one(input_path: str, output_folder: str) -> tuple[int, str]:
     # ── Incomplete → failed folder ────────────────────────────────────────────
     if total < REQUIRED_PAGES:
         missing = [_PAGE_LABELS[i] for i in range(REQUIRED_PAGES) if i >= total]
-        print(f"  [FAILED] Missing: {', '.join(missing)} — copying to failed/")
-        failed_dir = out_dir / "failed"
-        failed_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(src), str(failed_dir / src.name))
+        print(f"  [FAILED] Missing page(s): {', '.join(missing)} — copying to failed/")
+        _copy_to_failed(src, out_dir)
+        return 0, "failed"
+
+    # ── FAILED result on marksheet → failed folder ────────────────────────────
+    failed_page = _failed_result_page(reader)
+    if failed_page:
+        print(f"  [FAILED] Result is FAILED on {failed_page} marksheet — copying to failed/")
+        _copy_to_failed(src, out_dir)
         return 0, "failed"
 
     # ── Full PDF → split ──────────────────────────────────────────────────────
