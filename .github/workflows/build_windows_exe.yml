@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pypdf pdf2image Pillow pyinstaller
+          pip install pypdf pdf2image Pillow pytesseract pyinstaller
 
       # ── 4. Download Poppler for Windows (required by pdf2image) ───────────────
       - name: Download & extract Poppler
@@ -35,13 +35,22 @@ jobs:
           $url = "https://github.com/oschwartz10612/poppler-windows/releases/download/v24.08.0-0/Release-24.08.0-0.zip"
           Invoke-WebRequest -Uri $url -OutFile poppler.zip
           Expand-Archive -Path poppler.zip -DestinationPath poppler_extracted
-          # Find the bin folder and copy its contents into ./poppler/
           $binDir = Get-ChildItem -Path poppler_extracted -Recurse -Directory -Filter "bin" | Select-Object -First 1
           New-Item -ItemType Directory -Force -Path poppler | Out-Null
           Copy-Item -Path "$($binDir.FullName)\*" -Destination poppler -Recurse
           Write-Host "Poppler files copied: $((Get-ChildItem poppler).Count)"
 
-      # ── 5. Build the exe ─────────────────────────────────────────────────────
+      # ── 5. Install Tesseract OCR (required for scanned PDF detection) ─────────
+      - name: Install & stage Tesseract
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $tessDir = "C:\Program Files\Tesseract-OCR"
+          New-Item -ItemType Directory -Force -Path tesseract | Out-Null
+          Copy-Item -Path "$tessDir\*" -Destination tesseract -Recurse
+          Write-Host "Tesseract files staged: $((Get-ChildItem tesseract -Recurse -File).Count)"
+
+      # ── 6. Build the exe ─────────────────────────────────────────────────────
       - name: Build with PyInstaller
         shell: pwsh
         run: |
@@ -54,11 +63,13 @@ jobs:
             --hidden-import PIL `
             --hidden-import PIL.Image `
             --hidden-import PIL.JpegImagePlugin `
+            --hidden-import pytesseract `
             --hidden-import license_manager `
             --add-data "poppler;poppler" `
+            --add-data "tesseract;tesseract" `
             pdf_splitter_gui.py
 
-      # ── 6. Stage distribution folder (exe + license side-by-side) ────────────
+      # ── 7. Stage distribution folder (exe + license side-by-side) ────────────
       - name: Stage distribution package
         shell: pwsh
         run: |
@@ -68,7 +79,7 @@ jobs:
           Write-Host "Release contents:"
           Get-ChildItem release
 
-      # ── 7. Upload artifact zip ────────────────────────────────────────────────
+      # ── 8. Upload artifact zip ────────────────────────────────────────────────
       - name: Upload distribution artifact
         uses: actions/upload-artifact@v4
         with:

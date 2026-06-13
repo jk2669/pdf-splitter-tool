@@ -35,11 +35,34 @@ _PAGE_LABELS   = {0: "Photo", 1: "Aadhaar", 2: "10th", 3: "12th"}
 _RESULT_PAGES  = (2, 3)   # 10th and 12th marksheet pages
 
 
-def _failed_result_page(reader) -> str:
-    """Scan 10th/12th pages for the word FAILED. Returns page label or ''."""
+def _ocr_page(pdf_path: str, page_num: int, poppler_path) -> str:
+    """Render one page to an image and OCR it. Returns '' if unavailable."""
+    try:
+        import pytesseract
+        from pdf2image import convert_from_path
+        if getattr(sys, "frozen", False):
+            tess = os.path.join(sys._MEIPASS, "tesseract", "tesseract.exe")  # type: ignore[attr-defined]
+            pytesseract.pytesseract.tesseract_cmd = tess
+        images = convert_from_path(pdf_path, first_page=page_num,
+                                   last_page=page_num, dpi=200,
+                                   poppler_path=poppler_path)
+        if images:
+            return pytesseract.image_to_string(images[0], lang="eng")
+    except Exception:
+        pass
+    return ""
+
+
+def _failed_result_page(reader, src_path: str) -> str:
+    """
+    Scan 10th/12th pages for FAILED. Tries text layer first, falls back to OCR.
+    Returns the page label (e.g. '10th') if found, empty string otherwise.
+    """
     for idx in _RESULT_PAGES:
         if idx < len(reader.pages):
             text = reader.pages[idx].extract_text() or ""
+            if not text.strip():                        # scanned — use OCR
+                text = _ocr_page(src_path, idx + 1, _get_poppler_path())
             if "FAILED" in text.upper():
                 return _PAGE_LABELS[idx]
     return ""
@@ -97,7 +120,7 @@ def split_pdf(input_path: str, output_folder: str, log_fn=print) -> tuple[int, s
         return 0, "failed"
 
     # ── FAILED result on marksheet → failed folder ────────────────────────────
-    failed_page = _failed_result_page(reader)
+    failed_page = _failed_result_page(reader, str(src))
     if failed_page:
         log_fn(f"  [FAILED] Result is FAILED on {failed_page} marksheet — copying to failed/")
         _copy_to_failed(src, out_dir)

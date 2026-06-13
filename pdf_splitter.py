@@ -40,14 +40,31 @@ def _extract_number(filename: str) -> str:
     return match.group() if match else name
 
 
-def _failed_result_page(reader) -> str:
+def _ocr_page(pdf_path: str, page_num: int) -> str:
+    """Render one page to an image and OCR it. Returns '' if unavailable."""
+    try:
+        import pytesseract
+        from pdf2image import convert_from_path
+        images = convert_from_path(pdf_path, first_page=page_num,
+                                   last_page=page_num, dpi=200)
+        if images:
+            return pytesseract.image_to_string(images[0], lang="eng")
+    except Exception:
+        pass
+    return ""
+
+
+def _failed_result_page(reader, src_path: str) -> str:
     """
-    Scan the 10th and 12th pages for the word FAILED in the result column.
+    Scan 10th and 12th pages for the word FAILED.
+    Tries the PDF text layer first; falls back to OCR for scanned PDFs.
     Returns the page label (e.g. "10th") if found, empty string otherwise.
     """
     for idx in _RESULT_PAGES:
         if idx < len(reader.pages):
             text = reader.pages[idx].extract_text() or ""
+            if not text.strip():                        # scanned — use OCR
+                text = _ocr_page(src_path, idx + 1)
             if "FAILED" in text.upper():
                 return _PAGE_LABELS[idx]
     return ""
@@ -101,7 +118,7 @@ def split_one(input_path: str, output_folder: str) -> tuple[int, str]:
         return 0, "failed"
 
     # ── FAILED result on marksheet → failed folder ────────────────────────────
-    failed_page = _failed_result_page(reader)
+    failed_page = _failed_result_page(reader, str(src))
     if failed_page:
         print(f"  [FAILED] Result is FAILED on {failed_page} marksheet — copying to failed/")
         _copy_to_failed(src, out_dir)
